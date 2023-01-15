@@ -1,0 +1,134 @@
+################################################
+# Step 1:   Logon to Azure; Get, Set subscription
+################################################
+# Login to subscription
+az login
+
+# Retrieve default subscription id
+$subscriptionId = (
+    (
+        az account list `
+            --query "[?isDefault]" 
+    ) | ConvertFrom-Json
+).id
+
+# Set Subscription
+az account set --subscription $subscriptionId
+
+################################################
+# Step 2:   Define project unifier
+################################################
+$random = Get-Random -Minimum 100 -Maximum 999
+
+################################################
+# Step 3:   Create Resource Group
+################################################
+$resourceGroup = "FTA.IoTHubFileUploadSample"
+$location = "WestEurope"
+
+az group create `
+    --location $location `
+    --resource-group $resourceGroup
+
+################################################
+# Step 4:   Create IoT Hub 
+################################################
+$hubName = "IoTHubFileUploadSample$random"
+$hubPartitionCount = "2"
+$hubSku = "S1"
+
+az iot hub create `
+    --name $hubName `
+    --resource-group $resourceGroup `
+    --location $location `
+    --partition-count $hubPartitionCount `
+    --sku $hubSKU
+
+################################################
+# Step 5:   Create storage account and container
+################################################
+$storageAccountName = "iothubfileuplodad$random"
+$storageContainerName = "fileupload"
+$storageAccountSku = "Standard_LRS"
+
+az storage account create `
+--resource-group $resourceGroup `
+--name $storageAccountName `
+--sku $storageAccountSku
+
+$storageConnectionString = ( `
+    az storage account show-connection-string `
+        --resource-group $resourceGroup `
+        --name $storageAccountName `
+        --query connectionString `
+        --output tsv)
+
+az storage container create `
+--account-name $storageAccountName `
+--name $storageContainerName
+
+################################################
+# Step 6:   Link IoT Hub with Storage Account
+################################################
+$uploadNotificationMaxDelivery = 10
+$uploadNotificatonTtl = 1
+$uploadSasTtl = 1
+$uploadNotifications = "true"
+$uploadNotificationTtl = 1
+$storageAuthType = "keyBased"
+
+az iot hub update `
+    --name $hubName `
+    --fileupload-storage-auth-type $storageAuthType `
+    --fileupload-storage-connectionstring $storageConnectionString `
+    --fileupload-storage-container-name $storageContainerName `
+    --fileupload-notifications $uploadNotifications `
+    --fileupload-notification-max-delivery-count $uploadNotificationMaxDelivery `
+    --fileupload-notification-ttl $uploadNotificationTtl `
+    --fileupload-sas-ttl $uploadSasTtl 
+    
+################################################
+# Step 7:   Create IoT Hub device &
+#           Demo file upload options
+################################################
+$hubDeviceId = "deviceClassicUpload"
+
+az iot hub device-identity create `
+    --device-id $hubDeviceId `
+    --hub-name $hubName
+
+$hubDeviceConnectionString = (az iot hub device-identity connection-string show `
+    --device-id $hubDeviceId `
+    --hub-name $hubName `
+    --query connectionString `
+    --output tsv)
+
+# Demo "classic" file upload using IoT SDK
+dotnet run  --project src\FileUpload.DemoDevice\FileUpload.DemoDevice.csproj `
+            -- $hubDeviceConnectionString `
+               "ClassicFileUpload"
+
+# Demo recommended file upload using Storage SDK
+dotnet run  --project src\FileUpload.DemoDevice\FileUpload.DemoDevice.csproj `
+            -- $hubDeviceConnectionString `
+               "RecommendedFileUpload"
+
+#Demo quota excess
+dotnet run --project src\FileUpload.DemoDevice\FileUpload.DemoDevice.csproj `
+           -- $hubDeviceConnectionString `
+              "DeviceQuotaExcess"
+
+#Demo request & release
+dotnet run --project src\FileUpload.DemoDevice\FileUpload.DemoDevice.csproj `
+           -- $hubDeviceConnectionString `
+              "RequestAndRelease"
+
+################################################
+# Step 8:   Delete resource group / Clean up env
+################################################
+az group delete `
+    --resource-group $resourceGroup
+
+
+
+
